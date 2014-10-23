@@ -1,0 +1,5 @@
+
+This is a simple script to print a more easily readible display of the
+pci cards in the system. It uses information in the sysfs hierarchy to
+map the cards to block devices and /proc/mounts to translate this into
+mount points.

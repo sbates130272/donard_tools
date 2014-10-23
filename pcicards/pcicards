@@ -1,0 +1,222 @@
+#!/usr/bin/python
+########################################################################
+##
+## Copyright 2014 PMC-Sierra, Inc.
+##
+## Licensed under the Apache License, Version 2.0 (the "License"); you
+## may not use this file except in compliance with the License. You may
+## obtain a copy of the License at
+## http://www.apache.org/licenses/LICENSE-2.0 Unless required by
+## applicable law or agreed to in writing, software distributed under the
+## License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+## CONDITIONS OF ANY KIND, either express or implied. See the License for
+## the specific language governing permissions and limitations under the
+## License.
+##
+########################################################################
+
+########################################################################
+##
+##   Author: Logan Gunthorpe
+##
+##   Date: Oct 23, 2014
+##
+##   Description:
+##     Simple script to print human readable information on the
+##     physical PCI cards in the donard machine. The script should
+##     be reasonably general but is not gaurenteed to be fully correct
+##     on any other motherboard but the X9DRG-QF from SuperMicro
+##
+########################################################################
+
+
+import os
+import glob
+
+devices = {(0x11f8, 0xf117) : "PMC Mt Ramon NVMe/DMI",
+           (0x1425, 0x5001) : "Chelsio T520-CR 2x10G Eth",
+           (0x1425, 0x5401) : "Chelsio T520-CR 2x10G Eth",
+           (0x1425, 0x5501) : "Chelsio T520-CR 2x10G Eth",
+           (0x1425, 0x5601) : "Chelsio T520-CR 2x10G Eth",
+           (0x144d, 0xa820) : "Samsung NVMe",
+           (0x111d, 0x80d1) : "PMC Princeton NVMe",
+           (0x10de, 0x1022) : "Nvidia Tesla K20c"}
+
+def cat(fname):
+    return open(fname).read().strip()
+
+motherboard = cat("/sys/devices/virtual/dmi/id/board_name")
+
+if motherboard == "X9DRG-QF":
+    slot_names = {"0000:00:01" : "Slot 10",
+                  "0000:00:02" : "Slot 2 ",
+                  "0000:00:03" : "Slot 4 ",
+                  "0000:80:00" : "Slot 11",
+                  "0000:80:01" : "Slot 9 ",
+                  "0000:80:02" : "Slot 8 ",
+                  "0000:80:03" : "Slot 6 ",
+                  }
+else:
+    slot_names = {}
+
+mounts = [x.split() for x in open("/proc/mounts")]
+
+pci_ids = {}
+try:
+    cur_vendor = None
+    for x in open("/usr/share/misc/pci.ids"):
+        if not x.strip(): continue
+        if x.startswith("#"): continue
+        if x.startswith("\t\t"): continue
+
+        if x.startswith("\t"):
+            device, name = x.split(" ", 1)
+            device = int(device, 16)
+            pci_ids[(cur_vendor, device)] = name.strip()
+        else:
+            cur_vendor, name = x.split(" ", 1)
+            cur_vendor = int(cur_vendor, 16)
+except IOError:
+    pass
+
+ignored_root_ports = set([(0x1912, 0x0012),  #Renesas PCie-PCI bridge
+                          (0x1912, 0x0013),  #Renesas PCIe Switch (Matrox)
+                         ])
+
+def filter_duplicates(devs):
+    counts = {}
+
+    for dev in devs:
+        nonfuncdev = dev.rsplit(".", 1)[0]
+        a,b = counts.get(nonfuncdev, (0,0))
+
+        devc = len(glob.glob(os.path.join(dev, "0000:*")))
+
+        counts[nonfuncdev] = (a+1, b+devc)
+
+    def filt(dev):
+        nonfuncdev, func = dev.rsplit(".", 1)
+        devs = len(glob.glob(os.path.join(dev, "0000:*")))
+        a,b = counts[nonfuncdev]
+
+        if b == 0 and int(func == 0):
+            return 0
+
+        return a > 1 and not devs
+
+    return [dev for dev in devs if not filt(dev)]
+
+
+def find_root_ports():
+    nodes = {}
+
+    for dev in glob.glob("/sys/bus/pci/devices/*"):
+        dev_class = int(cat(os.path.join(dev, "class")), 16)
+        if dev_class != 0x60400:
+            continue
+
+        vendor_id = int(cat(os.path.join(dev, "vendor")), 16)
+        dev_id = int(cat(os.path.join(dev, "device")), 16)
+
+        if (vendor_id, dev_id) in pci_ids:
+            if "chipset" in pci_ids[(vendor_id, dev_id)].lower():
+                continue
+
+        if (vendor_id, dev_id) in ignored_root_ports:
+            continue
+
+        numa = int(cat(os.path.join(dev, "numa_node")))
+
+        nodes.setdefault(numa, []).append(dev)
+
+    return nodes
+
+
+def print_slots(slots):
+    def print_none(slot):
+        print "  %-7s          -  None" % (slot)
+
+    slot_num = 1
+    for path in filter_duplicates(slots):
+        try:
+            slot = slot_names.get(os.path.basename(path).split(".", 1)[0],
+                                  "Slot %d" % slot_num)
+            slot_num += 1
+
+            devpaths = glob.glob(os.path.join(path, "0000:*"))
+        except IOError:
+            print_none(slot)
+            continue
+        except IndexError:
+            print_none(slot)
+            continue
+        if not devpaths:
+            print_none(slot)
+            continue
+
+        for devpath in devpaths:
+            pcibus = os.path.basename(devpath)
+            idx = int(pcibus.split(":")[1], 16)
+            pcibus = pcibus.split(":", 1)[1]
+
+            try:
+                vendor = int(cat(os.path.join(devpath, "vendor")), 16)
+                device = int(cat(os.path.join(devpath, "device")), 16)
+                dclass = int(cat(os.path.join(devpath, "class")), 16)
+            except IOError:
+                print_none(slot)
+                continue
+
+            if (vendor, device) in devices:
+                name = devices[(vendor,device)]
+            elif (vendor, device) in pci_ids:
+                name = pci_ids[(vendor, device)]
+            elif dclass == 0x010802:
+                name = "NVMe Card (Unknown Vendor)"
+            else:
+                name = "Unknown Card"
+
+            provides = []
+
+            for block in glob.glob(os.path.join(devpath, "block", "*")):
+                block = os.path.basename(block)
+                mount_pt = ""
+                for m in mounts:
+                    if block in m[0]:
+                        mount_pt = m[1]
+                        break
+                provides.append("%-10s %s" % (block, mount_pt))
+
+            net = sorted(glob.glob(os.path.join(devpath, "net", "*")))
+            if net:
+                provides.append(", ".join(os.path.basename(n) for n in net))
+
+            mtramon = glob.glob(os.path.join(devpath, "mtramon", "*"))
+            for m in mtramon:
+                provides.append(os.path.basename(m))
+
+            drm = glob.glob(os.path.join(devpath, "drm", "*"))
+            for d in drm:
+                provides.append("dri/" + os.path.basename(d))
+
+            if vendor == 0x1425 and not net:
+                continue
+
+            if not provides: provides.append("")
+
+            name = name[:27]
+            print "  %-7s  %s -  %04x:%04x  %-27s  %s" % (slot, pcibus, vendor,
+                                                          device, name,
+                                                          provides[0])
+
+            for p in provides[1:]:
+                print " "*61, p
+
+
+
+if __name__ == "__main__":
+    nodes = sorted(find_root_ports().items())
+    for node, slots in nodes:
+        if len(nodes) > 1:
+            print "Numa Node %d:" % node
+        print_slots(slots)
