@@ -187,6 +187,15 @@ def print_slots(slots):
                         break
                 provides.append("%-10s %s" % (block, mount_pt))
 
+            for block in glob.glob(os.path.join(devpath, "nvme", "*")):
+                block = os.path.basename(block)
+                mount_pt = ""
+                for m in mounts:
+                    if block in m[0]:
+                        mount_pt = m[1]
+                        break
+                provides.append("%-10s %s" % (block, mount_pt))
+
             net = sorted(glob.glob(os.path.join(devpath, "net", "*")))
             if net:
                 provides.append(", ".join(os.path.basename(n) for n in net))
