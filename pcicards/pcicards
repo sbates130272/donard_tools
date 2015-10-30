@@ -34,13 +34,15 @@ import os
 import glob
 
 devices = {(0x11f8, 0xf117) : "PMC Mt Ramon NVMe/DMI",
+           (0x111d, 0x80d1) : "PMC Princeton NVMe",
+           (0x11f8, 0x8543) : "PMC Saratoga PCIe Switch",
            (0x1425, 0x5001) : "Chelsio T520-CR 2x10G Eth",
            (0x1425, 0x5401) : "Chelsio T520-CR 2x10G Eth",
            (0x1425, 0x5501) : "Chelsio T520-CR 2x10G Eth",
            (0x1425, 0x5601) : "Chelsio T520-CR 2x10G Eth",
            (0x144d, 0xa820) : "Samsung NVMe",
-           (0x111d, 0x80d1) : "PMC Princeton NVMe",
-           (0x10de, 0x1022) : "Nvidia Tesla K20c"}
+           (0x10de, 0x1022) : "Nvidia Tesla K20c",
+}
 
 def cat(fname):
     return open(fname).read().strip()
